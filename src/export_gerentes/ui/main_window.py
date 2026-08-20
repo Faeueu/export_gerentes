@@ -73,9 +73,10 @@ class PayrollApp(tk.Tk):
         self._last_canvas_width = 0
         self._resize_job: str | None = None
 
+        default_company = next((f"{code} — {name}" for code, name in COMPANIES.items()), "0018 — Lojão")
         self.status_var = tk.StringVar(value="Carregando cadastros…")
         self.calculation_var = tk.StringVar()
-        self.company_filter_var = tk.StringVar(value="Todas as empresas")
+        self.company_filter_var = tk.StringVar(value=default_company)
         self.search_var = tk.StringVar()
         self.people_summary_var = tk.StringVar(value="0 pessoas com valores")
         self.lines_summary_var = tk.StringVar(value="0 eventos para exportar")
@@ -296,10 +297,11 @@ class PayrollApp(tk.Tk):
         self._rebuild_header()
 
     def _company_filter_options(self) -> tuple[str, ...]:
-        return (
-            "Todas as empresas",
-            *(f"{code} — {name}" for code, name in COMPANIES.items()),
-        )
+        return tuple(f"{code} — {name}" for code, name in COMPANIES.items())
+
+    def selected_company_code(self) -> str:
+        company_filter = self.company_filter_var.get()
+        return company_filter.split("—", 1)[0].strip()
 
     def _event_column_width(self) -> int:
         num_events = len(self.events)
@@ -450,9 +452,10 @@ class PayrollApp(tk.Tk):
             if (key[0], key[1]) in valid_employee_keys
             and key[2] in valid_event_codes
         }
-        self.company_combo.configure(values=self._company_filter_options())
-        if self.company_filter_var.get() not in self.company_combo.cget("values"):
-            self.company_filter_var.set("Todas as empresas")
+        options = self._company_filter_options()
+        self.company_combo.configure(values=options)
+        if self.company_filter_var.get() not in options and options:
+            self.company_filter_var.set(options[0])
         self._rebuild_header()
         self.rebuild_table()
 
@@ -533,8 +536,7 @@ class PayrollApp(tk.Tk):
         messagebox.showinfo("Sucesso", f"O colaborador {employee.nome} foi removido.", parent=self)
 
     def filtered_employees(self) -> list[Employee]:
-        company_filter = self.company_filter_var.get()
-        company_code = company_filter.split("—", 1)[0].strip() if company_filter != "Todas as empresas" else ""
+        company_code = self.selected_company_code()
         search = self.search_var.get().strip().casefold()
         return [
             employee
@@ -803,9 +805,12 @@ class PayrollApp(tk.Tk):
             self._scroll_x("moveto", str(min(1.0, target)))
 
     def update_summary(self) -> None:
+        company_code = self.selected_company_code()
         valid_events = {event.codigo for event in self.events}
         positive_values = {
-            key: value for key, value in self.values.items() if value > 0 and key[2] in valid_events
+            key: value
+            for key, value in self.values.items()
+            if value > 0 and (not company_code or key[0] == company_code) and key[2] in valid_events
         }
         people = {(key[0], key[1]) for key in positive_values}
         lines = len(positive_values)
@@ -815,7 +820,7 @@ class PayrollApp(tk.Tk):
         self.total_summary_var.set(f"Total: {format_cents(total, include_symbol=True)}")
         self.export_button.state(("!disabled",) if lines else ("disabled",))
 
-    def collect_launches(self) -> tuple[str, list[Launch]]:
+    def collect_launches(self) -> tuple[str, str, list[Launch]]:
         invalid_entries = [
             entry for entry in self.visible_entries if not self._save_entry(entry, format_value=True)
         ]
@@ -826,11 +831,17 @@ class PayrollApp(tk.Tk):
             )
         calculation = normalize_calculation_code(self.calculation_var.get())
         self.calculation_var.set(calculation)
-        employee_by_key = {employee.key: employee for employee in self.employees}
+        company_code = self.selected_company_code()
+        if not company_code:
+            raise ValueError("Selecione uma empresa válida para exportação.")
+
+        employee_by_key = {
+            employee.key: employee for employee in self.employees if employee.empresa == company_code
+        }
         event_names = {event.codigo: event.nome for event in self.events}
         launches: list[Launch] = []
         for (company, registration, event_code), cents in sorted(self.values.items()):
-            if cents <= 0 or event_code not in event_names:
+            if company != company_code or cents <= 0 or event_code not in event_names:
                 continue
             employee = employee_by_key.get((company, registration))
             if employee is None:
@@ -845,12 +856,15 @@ class PayrollApp(tk.Tk):
                 )
             )
         if not launches:
-            raise ValueError("Informe pelo menos um valor maior que zero antes de continuar.")
-        return calculation, launches
+            company_name = COMPANIES.get(company_code, company_code)
+            raise ValueError(
+                f"Informe pelo menos um valor maior que zero para a empresa {company_code} — {company_name} antes de continuar."
+            )
+        return calculation, company_code, launches
 
     def show_preview(self) -> None:
         try:
-            calculation, launches = self.collect_launches()
+            calculation, company_code, launches = self.collect_launches()
         except ValueError as exc:
             messagebox.showwarning("Não foi possível montar a prévia", str(exc), parent=self)
             return
@@ -859,7 +873,7 @@ class PayrollApp(tk.Tk):
 
     def export_txt(self) -> None:
         try:
-            calculation, launches = self.collect_launches()
+            calculation, company_code, launches = self.collect_launches()
         except ValueError as exc:
             messagebox.showwarning("Não foi possível exportar", str(exc), parent=self)
             return
@@ -867,9 +881,9 @@ class PayrollApp(tk.Tk):
         data_dir = get_data_directory()
         path_text = filedialog.asksaveasfilename(
             parent=self,
-            title="Salvar arquivo de lançamentos Modelo 35",
+            title=f"Salvar arquivo Modelo 35 — Empresa {company_code}",
             initialdir=str(data_dir),
-            initialfile=f"r044mov_calc{calculation}_gerentes.txt",
+            initialfile=f"r044mov_calc{calculation}_emp{company_code}_gerentes.txt",
             defaultextension=".txt",
             filetypes=(("Arquivo de texto", "*.txt"),),
         )
@@ -887,9 +901,9 @@ class PayrollApp(tk.Tk):
             )
             return
 
-        self.status_var.set(f"TXT exportado: {path.name} — {len(launches)} lançamento(s).")
+        self.status_var.set(f"TXT Empresa {company_code} exportado: {path.name} — {len(launches)} lançamento(s).")
         messagebox.showinfo(
             "TXT exportado",
-            f"Arquivo salvo com {len(launches)} lançamento(s):\n\n{path}",
+            f"Arquivo da Empresa {company_code} salvo com {len(launches)} lançamento(s):\n\n{path}",
             parent=self,
         )
