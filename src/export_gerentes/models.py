@@ -11,8 +11,8 @@ class Employee:
     funcao: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "nome", " ".join(str(self.nome).split()).upper())
-        object.__setattr__(self, "funcao", " ".join(str(self.funcao).split()).upper())
+        object.__setattr__(self, "nome", " ".join(self.nome.split()).upper())
+        object.__setattr__(self, "funcao", " ".join(self.funcao.split()).upper())
 
     @property
     def key(self) -> tuple[str, str]:

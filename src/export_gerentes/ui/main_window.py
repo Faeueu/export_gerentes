@@ -691,6 +691,8 @@ class PayrollApp(tk.Tk):
 
     def _select_money(self, event: tk.Event) -> None:
         entry = event.widget
+        if not isinstance(entry, ttk.Entry):
+            return
         employee, event_code = self.entry_context[entry]
         event_name = next(item.nome for item in self.events if item.codigo == event_code)
         self.status_var.set(f"{employee.nome} · {event_code} — {event_name}")
@@ -719,15 +721,16 @@ class PayrollApp(tk.Tk):
     def _preview_money(self, event: tk.Event) -> None:
         if event.keysym in {"Return", "Shift_L", "Shift_R", "Tab"}:
             return
-        self._save_entry(event.widget, format_value=False)
+        if isinstance(event.widget, ttk.Entry):
+            self._save_entry(event.widget, format_value=False)
 
     def _commit_money(self, event: tk.Event) -> None:
-        if self._save_entry(event.widget, format_value=True):
+        if isinstance(event.widget, ttk.Entry) and self._save_entry(event.widget, format_value=True):
             save_values(self.employees, self.events, self.values)
 
     def _advance_entry(self, event: tk.Event) -> str:
         entry = event.widget
-        if not self._save_entry(entry, format_value=True):
+        if not isinstance(entry, ttk.Entry) or not self._save_entry(entry, format_value=True):
             return "break"
         index = self.visible_entries.index(entry)
         if index + 1 < len(self.visible_entries):
@@ -738,7 +741,7 @@ class PayrollApp(tk.Tk):
 
     def _previous_entry(self, event: tk.Event) -> str:
         entry = event.widget
-        if not self._save_entry(entry, format_value=True):
+        if not isinstance(entry, ttk.Entry) or not self._save_entry(entry, format_value=True):
             return "break"
         index = self.visible_entries.index(entry)
         if index > 0:
@@ -747,7 +750,7 @@ class PayrollApp(tk.Tk):
 
     def _entry_up(self, event: tk.Event) -> str:
         entry = event.widget
-        if not self._save_entry(entry, format_value=True):
+        if not isinstance(entry, ttk.Entry) or not self._save_entry(entry, format_value=True):
             return "break"
         index = self.visible_entries.index(entry)
         if index >= len(self.events):
@@ -756,7 +759,7 @@ class PayrollApp(tk.Tk):
 
     def _entry_down(self, event: tk.Event) -> str:
         entry = event.widget
-        if not self._save_entry(entry, format_value=True):
+        if not isinstance(entry, ttk.Entry) or not self._save_entry(entry, format_value=True):
             return "break"
         index = self.visible_entries.index(entry)
         if index + len(self.events) < len(self.visible_entries):

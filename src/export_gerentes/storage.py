@@ -5,6 +5,7 @@ import io
 import os
 import shutil
 import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from .constants import EMPLOYEE_COLUMNS, EVENT_COLUMNS
@@ -26,8 +27,9 @@ from .models import (
 
 def get_bundle_directory() -> Path:
     """Retorna o diretório temporário de recursos embutidos pelo PyInstaller (sys._MEIPASS) ou pasta local."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        return Path(sys._MEIPASS).resolve()
+    meipass = getattr(sys, "_MEIPASS", None)
+    if getattr(sys, "frozen", False) and meipass is not None:
+        return Path(meipass).resolve()
     return Path(__file__).resolve().parent.parent.parent
 
 
@@ -93,7 +95,11 @@ def _decode_csv(path: Path, description: str) -> str:
             raise ValueError(f"O arquivo de {description} possui codificação inválida.") from exc
 
 
-def _write_csv(path: Path, columns: tuple[str, ...] | list[str], rows: list[tuple[str, ...] | list[str]]) -> None:
+def _write_csv(
+    path: Path,
+    columns: Sequence[str],
+    rows: Iterable[Sequence[str]],
+) -> None:
     """Escreve dados em CSV com gravação atômica via arquivo temporário."""
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n")
