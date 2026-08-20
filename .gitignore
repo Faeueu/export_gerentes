@@ -29,3 +29,11 @@ ENV/
 # Output files
 *.txt
 !r044mov_calc*_gerentes.txt
+
+# Dados sensíveis e planilhas reais (LGPD / Proteção de Dados)
+colaboradores.csv
+eventos.csv
+valores.csv
+valores_modelo.csv
+*.xlsx
+*.xls

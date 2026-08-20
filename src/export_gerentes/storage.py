@@ -55,6 +55,8 @@ def _seed_bundled_data_if_missing(target_dir: Path) -> None:
         dest = target_dir / filename
         if not dest.exists():
             bundled_source = bundle_dir / filename
+            if not bundled_source.exists():
+                bundled_source = bundle_dir / filename.replace(".csv", "_exemplo.csv")
             if bundled_source.exists():
                 try:
                     shutil.copy2(bundled_source, dest)
@@ -134,9 +136,11 @@ def load_employees(path: Path | None = None) -> list[Employee]:
             if bundle_source.exists():
                 target = bundle_source
             else:
-                raise EmployeeFileError(
-                    f"O arquivo {target.name} não foi encontrado."
-                )
+                example_source = get_bundle_directory() / "colaboradores_exemplo.csv"
+                if example_source.exists():
+                    target = example_source
+                else:
+                    return []
 
     try:
         content = _decode_csv(target, "funcionários")

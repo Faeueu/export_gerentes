@@ -17,8 +17,16 @@ def build() -> None:
     print("Iniciando compilação com PyInstaller...")
 
     colaboradores_csv = ROOT_DIR / "colaboradores.csv"
+    if not colaboradores_csv.exists():
+        colaboradores_csv = ROOT_DIR / "colaboradores_exemplo.csv"
+
     eventos_csv = ROOT_DIR / "eventos.csv"
+    if not eventos_csv.exists():
+        eventos_csv = ROOT_DIR / "eventos_exemplo.csv"
+
     valores_csv = ROOT_DIR / "valores.csv"
+    if not valores_csv.exists():
+        valores_csv = ROOT_DIR / "valores_exemplo.csv"
 
     add_data_sep = ";" if sys.platform == "win32" else ":"
 
@@ -32,10 +40,12 @@ def build() -> None:
         "ExportGerentes",
         "--paths",
         str(SRC_DIR),
-        f"--add-data={colaboradores_csv}{add_data_sep}.",
-        f"--add-data={eventos_csv}{add_data_sep}.",
     ]
 
+    if colaboradores_csv.exists():
+        cmd.append(f"--add-data={colaboradores_csv}{add_data_sep}.")
+    if eventos_csv.exists():
+        cmd.append(f"--add-data={eventos_csv}{add_data_sep}.")
     if valores_csv.exists():
         cmd.append(f"--add-data={valores_csv}{add_data_sep}.")
 
