@@ -11,14 +11,21 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from ..constants import CANVAS, COMPANIES, DEFAULT_EVENTS, ERROR, MUTED, SURFACE
+from ..constants import CANVAS, COMPANIES, ERROR, MUTED, SURFACE
 from ..generator import (
     format_cents,
     normalize_company,
     normalize_event_code,
     normalize_registration,
 )
-from ..models import Employee, EmployeeFileError, EventFileError, Launch, PayrollEvent
+from ..models import (
+    DEFAULT_EVENTS,
+    Employee,
+    EmployeeFileError,
+    EventFileError,
+    Launch,
+    PayrollEvent,
+)
 from ..storage import get_data_directory, save_employees, save_events
 
 
