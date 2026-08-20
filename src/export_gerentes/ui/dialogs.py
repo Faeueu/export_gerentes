@@ -1,14 +1,17 @@
 """
-Janelas de diálogo modais: Adicionar Colaborador, Adicionar Evento e Prévia de Lançamentos.
+Janelas de diálogo modais: Adicionar/Gerenciar Colaboradores, Adicionar/Gerenciar Eventos e Prévia de Lançamentos.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from ..constants import CANVAS, COMPANIES, SURFACE
+from ..constants import CANVAS, COMPANIES, DEFAULT_EVENTS, ERROR, MUTED, SURFACE
 from ..generator import (
     format_cents,
     normalize_company,
@@ -16,7 +19,19 @@ from ..generator import (
     normalize_registration,
 )
 from ..models import Employee, EmployeeFileError, EventFileError, Launch, PayrollEvent
-from ..storage import save_employees, save_events
+from ..storage import get_data_directory, save_employees, save_events
+
+
+def _open_data_folder() -> None:
+    """Abre o diretório onde os dados estão salvos no Explorer do Windows."""
+    data_dir = get_data_directory()
+    try:
+        if sys.platform == "win32":
+            os.startfile(str(data_dir))
+        else:
+            subprocess.run(["xdg-open", str(data_dir)])
+    except Exception as exc:
+        messagebox.showinfo("Diretório de Dados", f"Os dados estão salvos em:\n\n{data_dir}\n\nDetalhe: {exc}")
 
 
 def show_add_employee_dialog(
@@ -114,6 +129,138 @@ def show_add_employee_dialog(
     name.focus_set()
 
 
+def show_manage_employees_dialog(
+    parent: tk.Tk | tk.Toplevel,
+    get_employees: Callable[[], list[Employee]],
+    on_employees_changed: Callable[[list[Employee]], None],
+) -> None:
+    dialog = tk.Toplevel(parent)
+    dialog.title("Gerenciar Gerentes e Colaboradores")
+    dialog.geometry("820x520")
+    dialog.minsize(700, 400)
+    dialog.configure(background=CANVAS)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    top_bar = ttk.Frame(dialog, style="Surface.TFrame", padding=(16, 12))
+    top_bar.pack(fill="x", padx=16, pady=(16, 8))
+    top_bar.columnconfigure(1, weight=1)
+
+    ttk.Label(top_bar, text="Buscar:", background=SURFACE).grid(row=0, column=0, padx=(0, 8))
+    search_var = tk.StringVar()
+    search_entry = ttk.Entry(top_bar, textvariable=search_var, width=28)
+    search_entry.grid(row=0, column=1, sticky="w")
+
+    btn_frame = ttk.Frame(top_bar, style="Surface.TFrame")
+    btn_frame.grid(row=0, column=2, sticky="e")
+
+    tree_frame = ttk.Frame(dialog, style="Surface.TFrame")
+    tree_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+    tree_frame.rowconfigure(0, weight=1)
+    tree_frame.columnconfigure(0, weight=1)
+
+    columns = ("empresa", "nome", "matricula", "funcao")
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+    tree.heading("empresa", text="Empresa")
+    tree.heading("nome", text="Nome")
+    tree.heading("matricula", text="Matrícula")
+    tree.heading("funcao", text="Função")
+
+    tree.column("empresa", width=80, anchor="center")
+    tree.column("nome", width=340, anchor="w")
+    tree.column("matricula", width=120, anchor="center")
+    tree.column("funcao", width=160, anchor="w")
+
+    vertical = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=vertical.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    vertical.grid(row=0, column=1, sticky="ns")
+
+    bottom_bar = ttk.Frame(dialog, style="Surface.TFrame", padding=(16, 10))
+    bottom_bar.pack(fill="x", padx=16, pady=(0, 16))
+    status_label = ttk.Label(bottom_bar, text="", background=SURFACE, style="Muted.TLabel")
+    status_label.pack(side="left")
+
+    ttk.Button(
+        bottom_bar,
+        text="📂 Abrir pasta dos dados",
+        style="Secondary.TButton",
+        command=_open_data_folder,
+    ).pack(side="right", padx=(8, 0))
+
+    def refresh_tree() -> None:
+        for item in tree.get_children():
+            tree.delete(item)
+        query = search_var.get().strip().casefold()
+        all_emp = get_employees()
+        filtered = [
+            e
+            for e in all_emp
+            if not query
+            or query in e.nome.casefold()
+            or query in e.matricula
+            or query in e.funcao.casefold()
+            or query in e.empresa
+        ]
+        for emp in filtered:
+            tree.insert("", "end", iid=f"{emp.empresa}_{emp.matricula}", values=(emp.empresa, emp.nome, emp.matricula, emp.funcao))
+        status_label.config(text=f"{len(filtered)} colaborador(es) exibido(s) de {len(all_emp)} cadastrados.")
+
+    search_var.trace_add("write", lambda *_: refresh_tree())
+
+    def delete_selected() -> None:
+        selected_id = tree.focus()
+        if not selected_id:
+            messagebox.showwarning("Atenção", "Selecione um funcionário na lista para excluir.", parent=dialog)
+            return
+        company_code, reg = selected_id.split("_", 1)
+        all_emp = get_employees()
+        emp_to_del = next((e for e in all_emp if e.empresa == company_code and e.matricula == reg), None)
+        if not emp_to_del:
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirmar exclusão",
+            f"Deseja realmente remover o colaborador abaixo do cadastro?\n\n"
+            f"Nome: {emp_to_del.nome}\n"
+            f"Empresa: {emp_to_del.empresa}\n"
+            f"Matrícula: {emp_to_del.matricula}\n"
+            f"Função: {emp_to_del.funcao}",
+            parent=dialog,
+        )
+        if not confirm:
+            return
+
+        updated = [e for e in all_emp if not (e.empresa == company_code and e.matricula == reg)]
+        try:
+            save_employees(updated)
+        except EmployeeFileError as exc:
+            messagebox.showerror("Erro ao salvar", str(exc), parent=dialog)
+            return
+
+        on_employees_changed(updated)
+        refresh_tree()
+        messagebox.showinfo("Sucesso", f"O colaborador {emp_to_del.nome} foi removido com sucesso.", parent=dialog)
+
+    def add_new() -> None:
+        def on_added(new_emp: Employee, updated_list: list[Employee]) -> None:
+            on_employees_changed(updated_list)
+            refresh_tree()
+            tree.selection_set(f"{new_emp.empresa}_{new_emp.matricula}")
+            tree.see(f"{new_emp.empresa}_{new_emp.matricula}")
+
+        show_add_employee_dialog(dialog, get_employees(), on_added)
+
+    ttk.Button(btn_frame, text="+ Novo colaborador", style="Primary.TButton", command=add_new).pack(
+        side="left", padx=(0, 8)
+    )
+    ttk.Button(btn_frame, text="🗑️ Excluir selecionado", style="Secondary.TButton", command=delete_selected).pack(
+        side="left"
+    )
+
+    refresh_tree()
+
+
 def show_add_event_dialog(
     parent: tk.Tk | tk.Toplevel,
     current_events: list[PayrollEvent],
@@ -180,6 +327,126 @@ def show_add_event_dialog(
     dialog.bind("<Escape>", lambda _event: dialog.destroy())
     dialog.wait_visibility()
     code.focus_set()
+
+
+def show_manage_events_dialog(
+    parent: tk.Tk | tk.Toplevel,
+    get_events: Callable[[], list[PayrollEvent]],
+    on_events_changed: Callable[[list[PayrollEvent]], None],
+) -> None:
+    dialog = tk.Toplevel(parent)
+    dialog.title("Gerenciar Eventos da Folha")
+    dialog.geometry("640x440")
+    dialog.minsize(540, 350)
+    dialog.configure(background=CANVAS)
+    dialog.transient(parent)
+    dialog.grab_set()
+
+    top_bar = ttk.Frame(dialog, style="Surface.TFrame", padding=(16, 12))
+    top_bar.pack(fill="x", padx=16, pady=(16, 8))
+    top_bar.columnconfigure(0, weight=1)
+
+    btn_frame = ttk.Frame(top_bar, style="Surface.TFrame")
+    btn_frame.grid(row=0, column=0, sticky="e")
+
+    tree_frame = ttk.Frame(dialog, style="Surface.TFrame")
+    tree_frame.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+    tree_frame.rowconfigure(0, weight=1)
+    tree_frame.columnconfigure(0, weight=1)
+
+    columns = ("codigo", "nome", "tipo")
+    tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+    tree.heading("codigo", text="Código")
+    tree.heading("nome", text="Nome do Evento")
+    tree.heading("tipo", text="Tipo")
+
+    tree.column("codigo", width=80, anchor="center")
+    tree.column("nome", width=340, anchor="w")
+    tree.column("tipo", width=120, anchor="center")
+
+    vertical = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=vertical.set)
+    tree.grid(row=0, column=0, sticky="nsew")
+    vertical.grid(row=0, column=1, sticky="ns")
+
+    bottom_bar = ttk.Frame(dialog, style="Surface.TFrame", padding=(16, 10))
+    bottom_bar.pack(fill="x", padx=16, pady=(0, 16))
+    status_label = ttk.Label(bottom_bar, text="", background=SURFACE, style="Muted.TLabel")
+    status_label.pack(side="left")
+
+    ttk.Button(
+        bottom_bar,
+        text="📂 Abrir pasta dos dados",
+        style="Secondary.TButton",
+        command=_open_data_folder,
+    ).pack(side="right", padx=(8, 0))
+
+    default_codes = {e.codigo for e in DEFAULT_EVENTS}
+
+    def refresh_tree() -> None:
+        for item in tree.get_children():
+            tree.delete(item)
+        all_ev = get_events()
+        for ev in all_ev:
+            is_def = ev.codigo in default_codes
+            tipo = "Padrão" if is_def else "Personalizado"
+            tree.insert("", "end", iid=ev.codigo, values=(ev.codigo, ev.nome, tipo))
+        status_label.config(text=f"{len(all_ev)} evento(s) configurado(s).")
+
+    def delete_selected() -> None:
+        selected_code = tree.focus()
+        if not selected_code:
+            messagebox.showwarning("Atenção", "Selecione um evento na lista para excluir.", parent=dialog)
+            return
+        if selected_code in default_codes:
+            messagebox.showinfo(
+                "Evento Padrão",
+                "Os eventos padrão do Modelo 35 (0816, 0239, 1074, 1102) não podem ser excluídos.",
+                parent=dialog,
+            )
+            return
+
+        all_ev = get_events()
+        ev_to_del = next((e for e in all_ev if e.codigo == selected_code), None)
+        if not ev_to_del:
+            return
+
+        confirm = messagebox.askyesno(
+            "Confirmar exclusão",
+            f"Deseja realmente remover o evento {ev_to_del.codigo} — {ev_to_del.nome}?",
+            parent=dialog,
+        )
+        if not confirm:
+            return
+
+        updated = [e for e in all_ev if e.codigo != selected_code]
+        try:
+            save_events(updated)
+        except EventFileError as exc:
+            messagebox.showerror("Erro ao salvar", str(exc), parent=dialog)
+            return
+
+        on_events_changed(updated)
+        refresh_tree()
+        messagebox.showinfo("Sucesso", f"O evento {ev_to_del.nome} foi removido.", parent=dialog)
+
+    def add_new() -> None:
+        def on_added(new_ev: PayrollEvent, updated_list: list[PayrollEvent]) -> None:
+            on_events_changed(updated_list)
+            refresh_tree()
+            tree.selection_set(new_ev.codigo)
+            tree.see(new_ev.codigo)
+
+        show_add_event_dialog(dialog, get_events(), on_added)
+
+    ttk.Button(btn_frame, text="+ Novo evento", style="Primary.TButton", command=add_new).pack(
+        side="left", padx=(0, 8)
+    )
+    ttk.Button(btn_frame, text="🗑️ Excluir selecionado", style="Secondary.TButton", command=delete_selected).pack(
+        side="left"
+    )
+
+    refresh_tree()
 
 
 def show_preview_dialog(

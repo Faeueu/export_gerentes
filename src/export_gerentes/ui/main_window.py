@@ -1,6 +1,6 @@
 """
 Janela principal do aplicativo Export Gerentes (Folha de Pagamento - Modelo 35 Senior).
-Implementa layout moderno, alinhamento pixel-perfect, colunas dinâmicas e exportação.
+Implementa layout moderno, alinhamento pixel-perfect, colunas dinâmicas, gerenciamento de cadastros e exportação.
 """
 
 from __future__ import annotations
@@ -54,6 +54,8 @@ from ..storage import (
 from .dialogs import (
     show_add_employee_dialog,
     show_add_event_dialog,
+    show_manage_employees_dialog,
+    show_manage_events_dialog,
     show_preview_dialog,
 )
 
@@ -205,16 +207,16 @@ class PayrollApp(tk.Tk):
         # Action Buttons Row
         actions = ttk.Frame(controls, style="Surface.TFrame")
         actions.grid(row=1, column=0, columnspan=7, sticky="ew", pady=(12, 0))
-        actions.columnconfigure(3, weight=1)
+        actions.columnconfigure(4, weight=1)
 
         ttk.Button(
-            actions, text="+ Adicionar gerente", style="Secondary.TButton", command=self.add_employee
+            actions, text="👥 Gerenciar gerentes", style="Secondary.TButton", command=self.manage_employees
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
-            actions, text="+ Adicionar evento", style="Secondary.TButton", command=self.add_event
+            actions, text="⚙️ Gerenciar eventos", style="Secondary.TButton", command=self.manage_events
         ).grid(row=0, column=1, padx=(0, 8))
         ttk.Button(
-            actions, text="Recarregar dados", style="Secondary.TButton", command=self.reload_files
+            actions, text="🔄 Recarregar dados", style="Secondary.TButton", command=self.reload_files
         ).grid(row=0, column=2)
 
         ttk.Button(
@@ -222,11 +224,11 @@ class PayrollApp(tk.Tk):
             text="Visualizar lançamentos",
             style="Secondary.TButton",
             command=self.show_preview,
-        ).grid(row=0, column=4, padx=8)
+        ).grid(row=0, column=5, padx=8)
         self.export_button = ttk.Button(
             actions, text="Exportar TXT", style="Primary.TButton", command=self.export_txt
         )
-        self.export_button.grid(row=0, column=5, padx=(8, 0))
+        self.export_button.grid(row=0, column=6, padx=(8, 0))
 
         # Summary Metrics Bar
         summary = ttk.Frame(self, style="Surface.TFrame", padding=(20, 9))
@@ -345,7 +347,6 @@ class PayrollApp(tk.Tk):
         for child in self.header_frame.winfo_children():
             child.destroy()
 
-        # O cabeçalho exibe apenas o NOME do evento (sem código)
         headers = ["Empresa", "Nome", "Matrícula", "Função", *(event.nome for event in self.events)]
         widths = self._column_widths()
 
@@ -460,26 +461,66 @@ class PayrollApp(tk.Tk):
             )
         self.after_idle(self.calculation_entry.focus_set)
 
-    def add_employee(self) -> None:
-        def on_added(employee: Employee, updated_list: list[Employee]) -> None:
+    def manage_employees(self) -> None:
+        def on_changed(updated_list: list[Employee]) -> None:
             self.employees = sorted(updated_list, key=lambda item: (item.empresa, item.nome.casefold()))
-            self.company_filter_var.set("Todas as empresas")
-            self.search_var.set("")
             self.rebuild_table()
-            self.status_var.set(f"{employee.nome} foi adicionado ao cadastro.")
-            self.after_idle(lambda: self._focus_employee(employee))
+            self.status_var.set(f"Cadastro atualizado: {len(self.employees)} colaborador(es).")
 
-        show_add_employee_dialog(self, self.employees, on_added)
+        show_manage_employees_dialog(self, lambda: self.employees, on_changed)
 
-    def add_event(self) -> None:
-        def on_added(event: PayrollEvent, updated_list: list[PayrollEvent]) -> None:
+    def manage_events(self) -> None:
+        def on_changed(updated_list: list[PayrollEvent]) -> None:
             self.events = updated_list
             self._rebuild_header()
             self.rebuild_table()
-            self.status_var.set(f"Evento {event.codigo} — {event.nome} adicionado com sucesso.")
-            self.after_idle(lambda: self._scroll_x("moveto", "1.0"))
+            self.status_var.set(f"Eventos atualizados: {len(self.events)} configurado(s).")
 
-        show_add_event_dialog(self, self.events, on_added)
+        show_manage_events_dialog(self, lambda: self.events, on_changed)
+
+    def add_employee(self) -> None:
+        self.manage_employees()
+
+    def add_event(self) -> None:
+        self.manage_events()
+
+    def _show_row_context_menu(self, event: tk.Event, employee: Employee) -> None:
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(
+            label=f"🗑️ Excluir {employee.nome}...",
+            command=lambda: self._delete_employee(employee),
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="👥 Gerenciar todos os colaboradores...",
+            command=self.manage_employees,
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _delete_employee(self, employee: Employee) -> None:
+        confirm = messagebox.askyesno(
+            "Confirmar exclusão",
+            f"Deseja realmente remover o colaborador abaixo do cadastro?\n\n"
+            f"Nome: {employee.nome}\n"
+            f"Empresa: {employee.empresa}\n"
+            f"Matrícula: {employee.matricula}\n"
+            f"Função: {employee.funcao}",
+            parent=self,
+        )
+        if not confirm:
+            return
+
+        updated = [e for e in self.employees if e.key != employee.key]
+        try:
+            save_employees(updated)
+        except EmployeeFileError as exc:
+            messagebox.showerror("Erro ao salvar", str(exc), parent=self)
+            return
+
+        self.employees = updated
+        self.rebuild_table()
+        self.status_var.set(f"{employee.nome} foi removido do cadastro.")
+        messagebox.showinfo("Sucesso", f"O colaborador {employee.nome} foi removido.", parent=self)
 
     def filtered_employees(self) -> list[Employee]:
         company_filter = self.company_filter_var.get()
@@ -510,7 +551,7 @@ class PayrollApp(tk.Tk):
             empty_text = (
                 "Nenhum funcionário encontrado para este filtro."
                 if self.employees
-                else "Clique em “+ Adicionar gerente” para começar."
+                else "Clique em “Gerenciar gerentes” para adicionar colaboradores."
             )
             tk.Label(
                 self.rows_frame,
@@ -542,51 +583,59 @@ class PayrollApp(tk.Tk):
             cell_empresa = tk.Frame(self.rows_frame, background=background, height=36)
             cell_empresa.grid(row=row_index, column=0, sticky="nsew", padx=(0, 1), pady=1)
             cell_empresa.grid_propagate(False)
-            tk.Label(
+            lbl_empresa = tk.Label(
                 cell_empresa,
                 text=employee.empresa,
                 background=background,
                 foreground=INK,
                 font=("Segoe UI Semibold", 9),
-            ).place(relx=0.5, rely=0.5, anchor="center")
+            )
+            lbl_empresa.place(relx=0.5, rely=0.5, anchor="center")
 
             # Coluna 1: Nome (Alinhado à esquerda com margem)
             cell_nome = tk.Frame(self.rows_frame, background=background, height=36)
             cell_nome.grid(row=row_index, column=1, sticky="nsew", padx=(0, 1), pady=1)
             cell_nome.grid_propagate(False)
-            tk.Label(
+            lbl_nome = tk.Label(
                 cell_nome,
                 text=employee.nome,
                 background=background,
                 foreground=INK,
                 font=("Segoe UI", 9),
                 anchor="w",
-            ).place(relx=0.03, rely=0.5, anchor="w")
+            )
+            lbl_nome.place(relx=0.03, rely=0.5, anchor="w")
 
             # Coluna 2: Matrícula (Centralizada)
             cell_mat = tk.Frame(self.rows_frame, background=background, height=36)
             cell_mat.grid(row=row_index, column=2, sticky="nsew", padx=(0, 1), pady=1)
             cell_mat.grid_propagate(False)
-            tk.Label(
+            lbl_mat = tk.Label(
                 cell_mat,
                 text=employee.matricula,
                 background=background,
                 foreground=INK,
                 font=("Segoe UI", 9),
-            ).place(relx=0.5, rely=0.5, anchor="center")
+            )
+            lbl_mat.place(relx=0.5, rely=0.5, anchor="center")
 
             # Coluna 3: Função (Alinhada à esquerda)
             cell_funcao = tk.Frame(self.rows_frame, background=background, height=36)
             cell_funcao.grid(row=row_index, column=3, sticky="nsew", padx=(0, 1), pady=1)
             cell_funcao.grid_propagate(False)
-            tk.Label(
+            lbl_funcao = tk.Label(
                 cell_funcao,
                 text=employee.funcao,
                 background=background,
                 foreground=INK,
                 font=("Segoe UI", 9),
                 anchor="w",
-            ).place(relx=0.06, rely=0.5, anchor="w")
+            )
+            lbl_funcao.place(relx=0.06, rely=0.5, anchor="w")
+
+            # Vincula clique com botão direito nas células para menu de contexto
+            for w in (cell_empresa, lbl_empresa, cell_nome, lbl_nome, cell_mat, lbl_mat, cell_funcao, lbl_funcao):
+                w.bind("<Button-3>", lambda event, emp=employee: self._show_row_context_menu(event, emp))
 
             # Colunas 4+: Campos de eventos / valores monetários
             for event_offset, payroll_event in enumerate(self.events, start=4):
