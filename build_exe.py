@@ -18,6 +18,7 @@ def build() -> None:
 
     colaboradores_csv = ROOT_DIR / "colaboradores.csv"
     eventos_csv = ROOT_DIR / "eventos.csv"
+    valores_csv = ROOT_DIR / "valores.csv"
 
     add_data_sep = ";" if sys.platform == "win32" else ":"
 
@@ -33,9 +34,15 @@ def build() -> None:
         str(SRC_DIR),
         f"--add-data={colaboradores_csv}{add_data_sep}.",
         f"--add-data={eventos_csv}{add_data_sep}.",
+    ]
+
+    if valores_csv.exists():
+        cmd.append(f"--add-data={valores_csv}{add_data_sep}.")
+
+    cmd.extend([
         "--clean",
         str(ROOT_DIR / "main.py"),
-    ]
+    ])
 
     print(f"Executando comando: {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=str(ROOT_DIR))

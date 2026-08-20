@@ -1,8 +1,3 @@
-"""
-Janela principal do aplicativo Export Gerentes (Folha de Pagamento - Modelo 35 Senior).
-Implementa layout moderno, alinhamento pixel-perfect, colunas dinâmicas, gerenciamento de cadastros e exportação.
-"""
-
 from __future__ import annotations
 
 import tkinter as tk
@@ -48,8 +43,10 @@ from ..storage import (
     get_data_directory,
     load_employees,
     load_events,
+    load_values,
     save_employees,
     save_events,
+    save_values,
 )
 from .dialogs import (
     show_add_employee_dialog,
@@ -210,7 +207,7 @@ class PayrollApp(tk.Tk):
         actions.columnconfigure(4, weight=1)
 
         ttk.Button(
-            actions, text="👥 Gerenciar gerentes", style="Secondary.TButton", command=self.manage_employees
+            actions, text="👥 Gerenciar colaboradores", style="Secondary.TButton", command=self.manage_employees
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
             actions, text="⚙️ Gerenciar eventos", style="Secondary.TButton", command=self.manage_events
@@ -438,6 +435,15 @@ class PayrollApp(tk.Tk):
         valid_event_codes = {event.codigo for event in events}
         self.employees = employees
         self.events = events
+
+        loaded_values = load_values(employees, events)
+        if not self.values or show_success:
+            self.values = loaded_values
+        else:
+            for key, val in loaded_values.items():
+                if key not in self.values:
+                    self.values[key] = val
+
         self.values = {
             key: value
             for key, value in self.values.items()
@@ -464,6 +470,7 @@ class PayrollApp(tk.Tk):
     def manage_employees(self) -> None:
         def on_changed(updated_list: list[Employee]) -> None:
             self.employees = sorted(updated_list, key=lambda item: (item.empresa, item.nome.casefold()))
+            save_values(self.employees, self.events, self.values)
             self.rebuild_table()
             self.status_var.set(f"Cadastro atualizado: {len(self.employees)} colaborador(es).")
 
@@ -472,6 +479,7 @@ class PayrollApp(tk.Tk):
     def manage_events(self) -> None:
         def on_changed(updated_list: list[PayrollEvent]) -> None:
             self.events = updated_list
+            save_values(self.employees, self.events, self.values)
             self._rebuild_header()
             self.rebuild_table()
             self.status_var.set(f"Eventos atualizados: {len(self.events)} configurado(s).")
@@ -518,6 +526,8 @@ class PayrollApp(tk.Tk):
             return
 
         self.employees = updated
+        self.values = {k: v for k, v in self.values.items() if (k[0], k[1]) != employee.key}
+        save_values(self.employees, self.events, self.values)
         self.rebuild_table()
         self.status_var.set(f"{employee.nome} foi removido do cadastro.")
         messagebox.showinfo("Sucesso", f"O colaborador {employee.nome} foi removido.", parent=self)
@@ -640,7 +650,6 @@ class PayrollApp(tk.Tk):
             # Colunas 4+: Campos de eventos / valores monetários
             for event_offset, payroll_event in enumerate(self.events, start=4):
                 key = (*employee.key, payroll_event.codigo)
-                variable = tk.StringVar(value=format_cents(self.values.get(key, 0)))
 
                 cell_event = tk.Frame(
                     self.rows_frame,
@@ -652,10 +661,10 @@ class PayrollApp(tk.Tk):
 
                 entry = ttk.Entry(
                     cell_event,
-                    textvariable=variable,
                     justify="right",
                     style="Money.TEntry",
                 )
+                entry.insert(0, format_cents(self.values.get(key, 0)))
                 entry.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.76)
 
                 self.visible_entries.append(entry)
@@ -713,7 +722,8 @@ class PayrollApp(tk.Tk):
         self._save_entry(event.widget, format_value=False)
 
     def _commit_money(self, event: tk.Event) -> None:
-        self._save_entry(event.widget, format_value=True)
+        if self._save_entry(event.widget, format_value=True):
+            save_values(self.employees, self.events, self.values)
 
     def _advance_entry(self, event: tk.Event) -> str:
         entry = event.widget

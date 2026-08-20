@@ -1,7 +1,3 @@
-"""
-Constantes e configurações visuais do aplicativo Export Gerentes.
-"""
-
 from __future__ import annotations
 
 APP_TITLE = "Comissões e Premiações — Folha de Pagamento"

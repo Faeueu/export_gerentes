@@ -23,6 +23,7 @@ from export_gerentes import (
     get_data_directory,
     load_employees,
     load_events,
+    load_values,
     normalize_calculation_code,
     normalize_company,
     normalize_event_code,
@@ -30,6 +31,7 @@ from export_gerentes import (
     parse_currency_to_cents,
     save_employees,
     save_events,
+    save_values,
     write_txt,
 )
 
@@ -196,6 +198,37 @@ class StorageDirectoryTests(unittest.TestCase):
                 data_dir = get_data_directory()
                 self.assertEqual(data_dir, Path(tmp) / "ExportGerentes")
                 self.assertTrue(data_dir.exists())
+
+
+class ValuesFileTests(unittest.TestCase):
+    def setUp(self):
+        self.employees = [
+            Employee("0018", "GERENTE TESTE", "000001234", "Gerente"),
+            Employee("0019", "MONTADOR TESTE", "000005678", "Montador"),
+        ]
+        self.events = list(DEFAULT_EVENTS)
+
+    def test_save_and_load_values_persists_correctly(self):
+        values = {
+            ("0018", "000001234", "0816"): 150000,
+            ("0018", "000001234", "0239"): 25050,
+            ("0019", "000005678", "1074"): 30000,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "valores.csv"
+            save_values(self.employees, self.events, values, path)
+            loaded = load_values(self.employees, self.events, path)
+
+        self.assertEqual(loaded[("0018", "000001234", "0816")], 150000)
+        self.assertEqual(loaded[("0018", "000001234", "0239")], 25050)
+        self.assertEqual(loaded[("0019", "000005678", "1074")], 30000)
+        self.assertNotIn(("0019", "000005678", "0816"), loaded)
+
+    def test_missing_values_file_returns_empty_dict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "nao_existe.csv"
+            loaded = load_values(self.employees, self.events, path)
+        self.assertEqual(loaded, {})
 
 
 if __name__ == "__main__":

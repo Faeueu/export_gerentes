@@ -1,7 +1,3 @@
-"""
-Modelos de dados e exceções para o aplicativo Export Gerentes.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,6 +9,10 @@ class Employee:
     nome: str
     matricula: str
     funcao: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "nome", " ".join(str(self.nome).split()).upper())
+        object.__setattr__(self, "funcao", " ".join(str(self.funcao).split()).upper())
 
     @property
     def key(self) -> tuple[str, str]:

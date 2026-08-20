@@ -1,9 +1,3 @@
-"""
-Gerenciamento seguro de persistência de dados (colaboradores e eventos).
-Garante que o executável empacotado armazene os dados internamente no AppData
-sem expor planilhas/CSVs para edição acidental pelo usuário final.
-"""
-
 from __future__ import annotations
 
 import csv
@@ -15,9 +9,11 @@ from pathlib import Path
 
 from .constants import EMPLOYEE_COLUMNS, EVENT_COLUMNS
 from .generator import (
+    format_cents,
     normalize_company,
     normalize_event_code,
     normalize_registration,
+    parse_currency_to_cents,
 )
 from .models import (
     DEFAULT_EVENTS,
@@ -55,7 +51,7 @@ def get_data_directory() -> Path:
 def _seed_bundled_data_if_missing(target_dir: Path) -> None:
     """Copia os arquivos padrão embutidos no .exe para o diretório de dados caso ainda não existam."""
     bundle_dir = get_bundle_directory()
-    for filename in ("colaboradores.csv", "eventos.csv"):
+    for filename in ("colaboradores.csv", "eventos.csv", "valores.csv"):
         dest = target_dir / filename
         if not dest.exists():
             bundled_source = bundle_dir / filename
@@ -72,6 +68,10 @@ def get_employees_file_path() -> Path:
 
 def get_events_file_path() -> Path:
     return get_data_directory() / "eventos.csv"
+
+
+def get_values_file_path() -> Path:
+    return get_data_directory() / "valores.csv"
 
 
 def _decode_csv(path: Path, description: str) -> str:
@@ -91,7 +91,7 @@ def _decode_csv(path: Path, description: str) -> str:
             raise ValueError(f"O arquivo de {description} possui codificação inválida.") from exc
 
 
-def _write_csv(path: Path, columns: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
+def _write_csv(path: Path, columns: tuple[str, ...] | list[str], rows: list[tuple[str, ...] | list[str]]) -> None:
     """Escreve dados em CSV com gravação atômica via arquivo temporário."""
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, delimiter=";", lineterminator="\r\n")
@@ -123,16 +123,20 @@ def employee_file_has_legacy_branch(path: Path | None = None) -> bool:
 
 
 def load_employees(path: Path | None = None) -> list[Employee]:
-    target = path or get_employees_file_path()
-    if not target.exists():
-        # Se não existe no AppData mas existe embutido, tenta ler do bundle
-        bundle_source = get_bundle_directory() / "colaboradores.csv"
-        if bundle_source.exists():
-            target = bundle_source
-        else:
-            raise EmployeeFileError(
-                f"O arquivo {target.name} não foi encontrado."
-            )
+    if path is not None:
+        target = path
+        if not target.exists():
+            raise EmployeeFileError(f"O arquivo {target.name} não foi encontrado.")
+    else:
+        target = get_employees_file_path()
+        if not target.exists():
+            bundle_source = get_bundle_directory() / "colaboradores.csv"
+            if bundle_source.exists():
+                target = bundle_source
+            else:
+                raise EmployeeFileError(
+                    f"O arquivo {target.name} não foi encontrado."
+                )
 
     try:
         content = _decode_csv(target, "funcionários")
@@ -217,13 +221,18 @@ def save_employees(employees: list[Employee], path: Path | None = None) -> None:
 
 
 def load_events(path: Path | None = None) -> list[PayrollEvent]:
-    target = path or get_events_file_path()
-    if not target.exists():
-        bundle_source = get_bundle_directory() / "eventos.csv"
-        if bundle_source.exists():
-            target = bundle_source
-        else:
+    if path is not None:
+        target = path
+        if not target.exists():
             return list(DEFAULT_EVENTS)
+    else:
+        target = get_events_file_path()
+        if not target.exists():
+            bundle_source = get_bundle_directory() / "eventos.csv"
+            if bundle_source.exists():
+                target = bundle_source
+            else:
+                return list(DEFAULT_EVENTS)
     try:
         content = _decode_csv(target, "eventos")
         reader = csv.DictReader(io.StringIO(content, newline=""), delimiter=";")
@@ -284,3 +293,104 @@ def save_events(events: list[PayrollEvent], path: Path | None = None) -> None:
         _write_csv(target, EVENT_COLUMNS, rows)
     except ValueError as exc:
         raise EventFileError(str(exc)) from exc
+
+
+def load_values(
+    employees: list[Employee],
+    events: list[PayrollEvent],
+    path: Path | None = None,
+) -> dict[tuple[str, str, str], int]:
+    """
+    Carrega os valores preenchidos salvos em valores.csv.
+    Retorna um dicionário {(empresa, matricula, codigo_evento): valor_em_centavos}.
+    """
+    if path is not None:
+        target = path
+        if not target.exists():
+            return {}
+    else:
+        target = get_values_file_path()
+        if not target.exists():
+            bundle_source = get_bundle_directory() / "valores.csv"
+            if bundle_source.exists():
+                target = bundle_source
+            else:
+                return {}
+
+    try:
+        content = _decode_csv(target, "valores")
+        reader = csv.DictReader(io.StringIO(content, newline=""), delimiter=";")
+        if not reader.fieldnames:
+            return {}
+
+        # Mapeia colunas para códigos de eventos
+        event_by_code = {event.codigo: event.codigo for event in events}
+        event_by_name = {event.nome.casefold(): event.codigo for event in events}
+        column_map: dict[str, str] = {}
+
+        for raw_col in reader.fieldnames:
+            col_cleaned = raw_col.strip()
+            # Se for código de evento normalizado
+            try:
+                norm = normalize_event_code(col_cleaned)
+                if norm in event_by_code:
+                    column_map[raw_col] = norm
+                    continue
+            except ValueError:
+                pass
+            if col_cleaned.casefold() in event_by_name:
+                column_map[raw_col] = event_by_name[col_cleaned.casefold()]
+
+        values: dict[tuple[str, str, str], int] = {}
+        for row in reader:
+            emp_text = (row.get("empresa") or "").strip()
+            mat_text = (row.get("matricula") or "").strip()
+            if not emp_text or not mat_text:
+                continue
+            try:
+                emp = normalize_company(emp_text)
+                mat = normalize_registration(mat_text)
+            except ValueError:
+                continue
+
+            for col_name, event_code in column_map.items():
+                val_text = (row.get(col_name) or "").strip()
+                if not val_text:
+                    continue
+                try:
+                    cents = parse_currency_to_cents(val_text)
+                    if cents > 0:
+                        values[(emp, mat, event_code)] = cents
+                except ValueError:
+                    pass
+
+        return values
+    except Exception:
+        return {}
+
+
+def save_values(
+    employees: list[Employee],
+    events: list[PayrollEvent],
+    values: dict[tuple[str, str, str], int],
+    path: Path | None = None,
+) -> None:
+    """
+    Persiste o estado atual dos valores da tabela em valores.csv.
+    """
+    target = path or get_values_file_path()
+    event_codes = [event.codigo for event in events]
+    columns = ["empresa", "nome", "matricula", "funcao", *event_codes]
+    rows: list[list[str]] = []
+
+    for emp in sorted(employees, key=lambda item: (item.empresa, item.nome.casefold())):
+        row_values = [
+            format_cents(values.get((emp.empresa, emp.matricula, code), 0))
+            for code in event_codes
+        ]
+        rows.append([emp.empresa, emp.nome, emp.matricula, emp.funcao, *row_values])
+
+    try:
+        _write_csv(target, columns, rows)
+    except Exception:
+        pass

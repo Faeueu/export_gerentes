@@ -1,7 +1,3 @@
-"""
-Lógica de validação, formatação e geração de registros no Modelo 35 da Senior.
-"""
-
 from __future__ import annotations
 
 import re

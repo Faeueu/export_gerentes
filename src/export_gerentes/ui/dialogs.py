@@ -60,7 +60,7 @@ def show_add_employee_dialog(
     company_var = tk.StringVar(value="0018 — Lojão")
     name_var = tk.StringVar()
     registration_var = tk.StringVar()
-    role_var = tk.StringVar(value="Gerente")
+    role_var = tk.StringVar(value="GERENTE")
 
     fields = (("Empresa", 0), ("Nome", 1), ("Matrícula", 2), ("Função", 3))
     for label, row in fields:
@@ -86,7 +86,7 @@ def show_add_employee_dialog(
     role = ttk.Combobox(
         content,
         textvariable=role_var,
-        values=("Gerente", "Subgerente", "Ideal Serviços"),
+        values=("GERENTE", "SUB GERENTE", "MONTADOR", "SUPERVISOR"),
         state="normal",
     )
     role.grid(row=3, column=1, sticky="ew", pady=7)
@@ -107,8 +107,8 @@ def show_add_employee_dialog(
         try:
             company_code = normalize_company(company_var.get().split("—", 1)[0].strip())
             registration_code = normalize_registration(registration_var.get())
-            employee_name = " ".join(name_var.get().split())
-            employee_role = " ".join(role_var.get().split())
+            employee_name = " ".join(name_var.get().split()).upper()
+            employee_role = " ".join(role_var.get().split()).upper()
             if not employee_name:
                 raise ValueError("Informe o nome do funcionário.")
             if not employee_role:
