@@ -1,6 +1,6 @@
 """
 Janela principal do aplicativo Export Gerentes (Folha de Pagamento - Modelo 35 Senior).
-Implementa layout moderno, alinhamento pixel-perfect, navegação por teclado e exportação.
+Implementa layout moderno, alinhamento pixel-perfect, colunas dinâmicas e exportação.
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ from ..constants import (
     COMPANIES,
     ERROR,
     ERROR_BG,
-    EVENT_COL_WIDTH,
     GREEN,
     HEADER_BG,
     INK,
+    MIN_EVENT_COL_WIDTH,
     MUTED,
     NAVY,
     ROW_ALT_BG,
@@ -71,6 +71,9 @@ class PayrollApp(tk.Tk):
         self.values: dict[tuple[str, str, str], int] = {}
         self.visible_entries: list[ttk.Entry] = []
         self.entry_context: dict[ttk.Entry, tuple[Employee, str]] = {}
+        self._last_canvas_width = 0
+        self._resize_job: str | None = None
+
         self.status_var = tk.StringVar(value="Carregando cadastros…")
         self.calculation_var = tk.StringVar()
         self.company_filter_var = tk.StringVar(value="Todas as empresas")
@@ -272,7 +275,7 @@ class PayrollApp(tk.Tk):
 
         self.rows_frame.bind("<Configure>", self._refresh_table_geometry)
         self.header_frame.bind("<Configure>", self._refresh_table_geometry)
-        self.table_canvas.bind("<Configure>", self._refresh_table_geometry)
+        self.table_canvas.bind("<Configure>", self._on_canvas_configure)
         self.table_canvas.bind("<Enter>", self._activate_mousewheel)
         self.table_canvas.bind("<Leave>", self._deactivate_mousewheel)
 
@@ -299,27 +302,62 @@ class PayrollApp(tk.Tk):
             *(f"{code} — {name}" for code, name in COMPANIES.items()),
         )
 
+    def _event_column_width(self) -> int:
+        num_events = len(self.events)
+        if num_events == 0:
+            return MIN_EVENT_COL_WIDTH
+
+        viewport_width = self.table_canvas.winfo_width()
+        if viewport_width <= 1:
+            viewport_width = 1320
+
+        static_total = sum(STATIC_WIDTHS)
+        available_for_events = viewport_width - static_total - 20
+        calculated = int(available_for_events / num_events)
+        return max(MIN_EVENT_COL_WIDTH, calculated)
+
     def _content_width(self) -> int:
-        return sum(STATIC_WIDTHS) + len(self.events) * EVENT_COL_WIDTH
+        return sum(STATIC_WIDTHS) + len(self.events) * self._event_column_width()
 
     def _column_widths(self) -> tuple[int, ...]:
-        return (*STATIC_WIDTHS, *(EVENT_COL_WIDTH for _ in self.events))
+        event_width = self._event_column_width()
+        return (*STATIC_WIDTHS, *(event_width for _ in self.events))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        if event.widget != self.table_canvas:
+            self._refresh_table_geometry()
+            return
+
+        if abs(event.width - self._last_canvas_width) > 15:
+            self._last_canvas_width = event.width
+            if self._resize_job is not None:
+                self.after_cancel(self._resize_job)
+            self._resize_job = self.after(50, self._apply_resize)
+        else:
+            self._refresh_table_geometry()
+
+    def _apply_resize(self) -> None:
+        self._resize_job = None
+        self._rebuild_header()
+        self.rebuild_table()
 
     def _rebuild_header(self) -> None:
         for child in self.header_frame.winfo_children():
             child.destroy()
 
-        event_headers = []
-        for event in self.events:
-            short_name = event.nome if len(event.nome) <= 18 else event.nome[:17].rstrip() + "…"
-            event_headers.append(f"{event.codigo}\n{short_name}")
-
-        headers = ["Empresa", "Nome", "Matrícula", "Função", *event_headers]
+        # O cabeçalho exibe apenas o NOME do evento (sem código)
+        headers = ["Empresa", "Nome", "Matrícula", "Função", *(event.nome for event in self.events)]
         widths = self._column_widths()
 
         for column, (title, width) in enumerate(zip(headers, widths)):
-            self.header_frame.columnconfigure(column, minsize=width, weight=0, uniform=f"c{column}")
-            cell = tk.Frame(self.header_frame, background=HEADER_BG, width=width, height=48)
+            is_event = column >= 4
+            uniform_group = "event_cols" if is_event else f"c{column}"
+            weight = 1 if is_event else 0
+
+            self.header_frame.columnconfigure(
+                column, minsize=width, weight=weight, uniform=uniform_group
+            )
+            cell = tk.Frame(self.header_frame, background=HEADER_BG, height=48)
             cell.grid(row=0, column=column, sticky="nsew", padx=(0, 1))
             cell.grid_propagate(False)
 
@@ -330,7 +368,8 @@ class PayrollApp(tk.Tk):
                 foreground=INK,
                 font=("Segoe UI Semibold", 9),
                 justify="center",
-            ).place(relx=0.5, rely=0.5, anchor="center")
+                wraplength=max(width - 14, 60),
+            ).place(relx=0.5, rely=0.5, anchor="center", relwidth=0.96)
 
         self.after_idle(self._refresh_table_geometry)
 
@@ -489,13 +528,18 @@ class PayrollApp(tk.Tk):
 
         # Configura as colunas de self.rows_frame com uniformidade estrita
         for col_idx, width in enumerate(widths):
-            self.rows_frame.columnconfigure(col_idx, minsize=width, weight=0, uniform=f"c{col_idx}")
+            is_event = col_idx >= 4
+            uniform_group = "event_cols" if is_event else f"c{col_idx}"
+            weight = 1 if is_event else 0
+            self.rows_frame.columnconfigure(
+                col_idx, minsize=width, weight=weight, uniform=uniform_group
+            )
 
         for row_index, employee in enumerate(employees):
             background = SURFACE if row_index % 2 == 0 else ROW_ALT_BG
 
             # Coluna 0: Empresa (Apenas código)
-            cell_empresa = tk.Frame(self.rows_frame, background=background, height=36, width=widths[0])
+            cell_empresa = tk.Frame(self.rows_frame, background=background, height=36)
             cell_empresa.grid(row=row_index, column=0, sticky="nsew", padx=(0, 1), pady=1)
             cell_empresa.grid_propagate(False)
             tk.Label(
@@ -507,7 +551,7 @@ class PayrollApp(tk.Tk):
             ).place(relx=0.5, rely=0.5, anchor="center")
 
             # Coluna 1: Nome (Alinhado à esquerda com margem)
-            cell_nome = tk.Frame(self.rows_frame, background=background, height=36, width=widths[1])
+            cell_nome = tk.Frame(self.rows_frame, background=background, height=36)
             cell_nome.grid(row=row_index, column=1, sticky="nsew", padx=(0, 1), pady=1)
             cell_nome.grid_propagate(False)
             tk.Label(
@@ -520,7 +564,7 @@ class PayrollApp(tk.Tk):
             ).place(relx=0.03, rely=0.5, anchor="w")
 
             # Coluna 2: Matrícula (Centralizada)
-            cell_mat = tk.Frame(self.rows_frame, background=background, height=36, width=widths[2])
+            cell_mat = tk.Frame(self.rows_frame, background=background, height=36)
             cell_mat.grid(row=row_index, column=2, sticky="nsew", padx=(0, 1), pady=1)
             cell_mat.grid_propagate(False)
             tk.Label(
@@ -532,7 +576,7 @@ class PayrollApp(tk.Tk):
             ).place(relx=0.5, rely=0.5, anchor="center")
 
             # Coluna 3: Função (Alinhada à esquerda)
-            cell_funcao = tk.Frame(self.rows_frame, background=background, height=36, width=widths[3])
+            cell_funcao = tk.Frame(self.rows_frame, background=background, height=36)
             cell_funcao.grid(row=row_index, column=3, sticky="nsew", padx=(0, 1), pady=1)
             cell_funcao.grid_propagate(False)
             tk.Label(
@@ -553,7 +597,6 @@ class PayrollApp(tk.Tk):
                     self.rows_frame,
                     background=background,
                     height=36,
-                    width=widths[event_offset],
                 )
                 cell_event.grid(row=row_index, column=event_offset, sticky="nsew", padx=(0, 1), pady=1)
                 cell_event.grid_propagate(False)
@@ -564,7 +607,7 @@ class PayrollApp(tk.Tk):
                     justify="right",
                     style="Money.TEntry",
                 )
-                entry.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.92, relheight=0.76)
+                entry.place(relx=0.5, rely=0.5, anchor="center", relwidth=0.94, relheight=0.76)
 
                 self.visible_entries.append(entry)
                 self.entry_context[entry] = (employee, payroll_event.codigo)

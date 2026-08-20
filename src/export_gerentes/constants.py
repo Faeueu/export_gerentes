@@ -15,12 +15,12 @@ COMPANIES = {
     "0019": "Ideal Serviço",
 }
 
-# Larguras fixas das colunas para alinhamento uniforme e perfeito
+# Larguras das colunas estáticas
 COMPANY_COL_WIDTH = 70
 NAME_COL_WIDTH = 310
 REGISTRATION_COL_WIDTH = 105
 ROLE_COL_WIDTH = 130
-EVENT_COL_WIDTH = 145
+MIN_EVENT_COL_WIDTH = 145
 
 STATIC_WIDTHS = (
     COMPANY_COL_WIDTH,
